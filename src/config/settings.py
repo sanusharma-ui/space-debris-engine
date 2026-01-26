@@ -201,7 +201,7 @@ LOOKAHEAD_SEC = 78.0        # screening horizon (s)
 LOOKAHEAD_MIN = 1.0         # minimum sensible lookahead (s)
 LOOKAHEAD_MAX = 3600.0     # maximum lookahead (s) — safety cap
 
-MAX_DEBRIS = 50             # practical upper limit for debris list in CLI
+MAX_DEBRIS = 500             # practical upper limit for debris list in CLI
 SPREAD = 5000.0             # m — initial position spread used by random generator
 REL_VEL_SPREAD = 20.0       # m/s — relative velocity perturbation for random debris
 
@@ -237,7 +237,7 @@ DEFAULT_BALLISTIC_COEFF = 50.0  # kg/m^2
 # Screening (Engine-1) tuning
 # ---------------------------------------------------------------------------
 ENGINE1_DT = 2.0              # seconds (scientifically safe for LEO screening)
-ENGINE1_LOOKAHEAD = 600.0     # seconds
+ENGINE1_LOOKAHEAD = 2000.0     # seconds
 ENGINE1_CW_SAMPLES = 120      # CW sampling (conservative but fast)
 ENGINE1_USE_CHAN = False      # IMPORTANT: Chan disabled in screening
 
