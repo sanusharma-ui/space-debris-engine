@@ -141,3 +141,4 @@ class RK45Solver:
                         h = max(self.dt_min, h_new)
                         # retry with smaller h
         return s
+

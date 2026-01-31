@@ -51,3 +51,6 @@ pytest_cache/
 # Misc
 *.bak
 *.swp
+
+# Runtime / cache files
+tle_cache.json
