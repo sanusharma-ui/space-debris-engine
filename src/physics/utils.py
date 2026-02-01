@@ -1,24 +1,4 @@
-# # src/physics/utils.py
-# import numpy as np
-# from src.config.settings import GM, RE, J2
 
-# def specific_energy(state):
-#     """
-#     Compute specific mechanical energy (kinetic + potential, including J2).
-#     Assumes conservative forces only (no drag for accurate conservation).
-#     """
-#     position = state.r
-#     r = np.linalg.norm(position)
-#     cos_theta = position[2] / r
-#     phi_newton = -GM / r
-#     phi_j2 = -(GM / r) * (J2 * (RE / r)**2) * (3 * cos_theta**2 - 1) / 2
-#     phi = phi_newton + phi_j2
-#     kinetic = 0.5 * np.dot(state.v, state.v)
-#     return kinetic + phi
-
-# new 
-
-# src/physics/utils.py
 import numpy as np
 from src.config.settings import GM, RE, J2
 def specific_energy(state):

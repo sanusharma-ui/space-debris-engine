@@ -1,4 +1,3 @@
-# src/physics/geometry.py
 import numpy as np
 
 def time_of_closest_approach(r1, v1, r2, v2):

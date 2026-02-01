@@ -1,5 +1,4 @@
 
-# src/models/satellite.py
 import numpy as np
 from src.config.settings import DEFAULT_POS_STD
 

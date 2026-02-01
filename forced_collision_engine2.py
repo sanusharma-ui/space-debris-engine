@@ -14,9 +14,7 @@ def main():
 
     r = EARTH_RADIUS + ALTITUDE
 
-    # -----------------------------
     # SATELLITE (REFERENCE)
-    # -----------------------------
     sat_pos = np.array([r, 0.0, 0.0])
     sat_vel = np.array([0.0, SAT_SPEED, 0.0])
 
@@ -25,9 +23,7 @@ def main():
         velocity=sat_vel
     )
 
-    # -----------------------------
     # DEBRIS (INTENTIONALLY CLOSE)
-    # -----------------------------
     debris_pos = np.array([r + 500.0, 0.0, 0.0])      # 500 m radial offset
     debris_vel = np.array([0.0, SAT_SPEED + 15.0, 0.0])  # slight along-track drift
 
@@ -39,9 +35,7 @@ def main():
     print("\nInitial Separation:",
           np.linalg.norm(debris_pos - sat_pos), "m")
 
-    # -----------------------------
     # ENGINE-2 RUN
-    # -----------------------------
     engine2 = Engine2(
         dt=1.0,
         adaptive_threshold=2000.0,
