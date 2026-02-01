@@ -78,8 +78,6 @@ Engine‑2 is intentionally pairwise and diagnostic‑focused.
 - **Parser:** tolerant — finds consecutive `1 ` / `2 ` TLE lines anywhere in the response and optionally uses a preceding line as the name.  
 - **Cache:** `tle_cache.json` with TTL (default 6 hours). Cache entries include `timestamp`, `name`, `line1`, `line2`, and `source`.
 
-**DO NOT commit `tle_cache.json`** — treat it as a runtime artifact and add it to `.gitignore`.
-
 ---
 
 ## Quick start
