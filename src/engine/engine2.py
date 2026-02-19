@@ -1,4 +1,3 @@
-
 """
 Engine-2: High-fidelity physics-based collision confirmation engine (Stage-2).
 
@@ -45,24 +44,48 @@ def _composite_has_nonconservative(force: CompositeForce) -> bool:
     return False
 
 
+def _energy_drift_supported(force: CompositeForce) -> bool:
+    """
+    Only report energy drift when the force model matches the potential used in specific_energy().
+    specific_energy() currently includes Newtonian + J2 only.
+    """
+    allowed = (NewtonianGravity, J2Perturbation)
+    for m in getattr(force, "models", []):
+        if not isinstance(m, allowed):
+            return False
+    return True
+
+
 class Engine2:
     """
     Engine-2: Confirmation engine. Focus on accuracy and diagnostics.
     """
-    def __init__(self, dt: float = 1.0, adaptive_threshold: float = 5000.0, enable_drag: bool = True,
-                 enable_srp: bool = False, enable_third_body: bool = True):
+    def __init__(
+        self,
+        dt: float = 1.0,
+        adaptive_threshold: float = 5000.0,
+        enable_drag: bool = True,
+        enable_srp: bool = False,
+        enable_third_body: bool = True,
+        srp_Cr: float = 1.2,
+        srp_area_mass_ratio: float = 0.02,
+    ):
         """
         dt: base timestep in seconds (used as nominal step)
         adaptive_threshold: refine timestep when relative distance < this (meters)
         enable_drag: include atmospheric drag model
         enable_srp: include solar radiation pressure
         enable_third_body: include Sun/Moon third-body gravity
+        srp_Cr: reflectivity coefficient
+        srp_area_mass_ratio: spacecraft area-to-mass ratio (A/m) [m^2/kg]
         """
         self.dt_base = float(dt)
         self.adaptive_threshold = float(adaptive_threshold)
         self.enable_drag = bool(enable_drag)
         self.enable_srp = bool(enable_srp)
         self.enable_third_body = bool(enable_third_body)
+        self.srp_Cr = float(srp_Cr)
+        self.srp_area_mass_ratio = float(srp_area_mass_ratio)
 
         # Engine-1 instance for optional escalation checks (lightweight screening)
         self.engine1 = Engine1()
@@ -70,7 +93,7 @@ class Engine2:
     def _get_force_model(self, ballistic_coeff: float):
         """
         Build CompositeForce for an object given ballistic coefficient.
-        Order: central + J2/J3/J4, optional drag, optional SRP, optional third-body wrapper.
+        Order: central + J2/J3/J4, optional drag, optional SRP, optional third-body.
         """
         models = [
             NewtonianGravity(),
@@ -81,8 +104,12 @@ class Engine2:
         if self.enable_drag:
             models.append(AtmosphericDrag(ballistic_coeff))
         if self.enable_srp:
-            # default Am and Cr are tunable at Engine-2 call-time by replacing this model
-            models.append(SolarRadiationPressure(Cr=1.2, area_mass_ratio=getattr(ballistic_coeff, "area_mass_ratio", 0.02) if False else 0.02))
+            models.append(
+                SolarRadiationPressure(
+                    Cr=self.srp_Cr,
+                    area_mass_ratio=self.srp_area_mass_ratio,
+                )
+            )
         if self.enable_third_body:
             models.append(ThirdBodyForce(include_sun=True, include_moon=True))
         return CompositeForce(*models)
@@ -106,12 +133,15 @@ class Engine2:
         # Optional quick escalation check using Engine-1 (helps skip unnecessary high-fidelity runs)
         if use_engine1_escalation:
             try:
-                screening = self.engine1.run(satellite, [debris], dt=self.dt_base, steps=max(1, int(duration / self.dt_base)))
-                # engine1.run returns dict with "screening" list
+                screening = self.engine1.run(
+                    satellite,
+                    [debris],
+                    dt=self.dt_base,
+                    steps=max(1, int(duration / self.dt_base)),
+                )
                 if isinstance(screening, dict) and "screening" in screening:
                     recs = screening["screening"]
                     if recs and isinstance(recs, list):
-                        # if screening says zero probability, skip confirmation
                         p = float(recs[0].get("probability", recs[0].get("prob", 0.0)))
                         if p <= 0.0:
                             return {
@@ -125,7 +155,6 @@ class Engine2:
                                 "note": "Skipped by Engine-1 escalation (screening indicated no risk)."
                             }
             except Exception:
-                # If Engine-1 fails for some reason, continue to run Engine-2.
                 pass
 
         # Initialize states
@@ -142,8 +171,14 @@ class Engine2:
         # Determine whether propagation is conservative for energy-drift reporting
         nonconservative = _composite_has_nonconservative(force_sat) or _composite_has_nonconservative(force_deb)
 
-        init_e_sat = specific_energy(sat_state) if not nonconservative else None
-        init_e_deb = specific_energy(deb_state) if not nonconservative else None
+        can_report_energy = (
+            (not nonconservative)
+            and _energy_drift_supported(force_sat)
+            and _energy_drift_supported(force_deb)
+        )
+
+        init_e_sat = specific_energy(sat_state) if can_report_energy else None
+        init_e_deb = specific_energy(deb_state) if can_report_energy else None
 
         t = 0.0
         min_dist = float("inf")
@@ -189,8 +224,8 @@ class Engine2:
         collision = bool(min_dist <= COLLISION_RADIUS)
         conjunction = bool(min_dist <= DANGER_RADIUS)
 
-        # Energy drift if conservative (no drag/SRP/third-body)
-        if not nonconservative:
+        # Energy drift only when supported by the energy model
+        if can_report_energy:
             final_e_sat = specific_energy(sat_state)
             final_e_deb = specific_energy(deb_state)
             drift_sat = (abs(final_e_sat - init_e_sat) / abs(init_e_sat) * 100.0) if init_e_sat not in (0, None) else 0.0
@@ -238,11 +273,9 @@ class Engine2:
             L_vel_deb = np.linalg.cholesky(cov_vel_deb_spd)
             use_cholesky = True
         except Exception:
-            # fallback: we'll use numpy multivariate draws per sample
             use_cholesky = False
 
         if use_cholesky:
-            # Vectorized draws: shape (N,3)
             Z_pos_sat = np.random.normal(size=(N, 3))
             Z_vel_sat = np.random.normal(size=(N, 3))
             Z_pos_deb = np.random.normal(size=(N, 3))
@@ -282,7 +315,6 @@ class Engine2:
                 if min_dist <= DANGER_RADIUS:
                     conjunctions += 1
         else:
-            # Safe fallback (original style but vectorized sampling not available)
             for i in range(N):
                 pert_pos_sat = np.random.multivariate_normal(np.zeros(3), cov_pos_sat)
                 pert_vel_sat = np.random.multivariate_normal(np.zeros(3), cov_vel_sat)
