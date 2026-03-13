@@ -17,7 +17,7 @@ from src.physics.forces import (
     NewtonianGravity,
     J2Perturbation,
     J3Perturbation,
-    J4Perturbation,
+    J4Perturbation, 
     AtmosphericDrag,
     SolarRadiationPressure,
     ThirdBodyForce,

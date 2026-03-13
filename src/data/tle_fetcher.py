@@ -1,24 +1,31 @@
 """
 Robust TLE fetcher (Space-Track primary, CelesTrak fallback, disk cache).
 
-Phase-1 hardening upgrades:
+Production upgrades:
+ - Non-interactive Space-Track auth via .env
  - Treat Space-Track 204 as "no TLE" (do NOT disable provider globally)
  - Provider disable is per-NORAD (not global) to avoid hurting other IDs
  - Cache only SUCCESS payloads (no caching failures)
  - Robust HTML/error detection for CelesTrak
+ - Reusable authenticated session
+ - Optional env-based cache settings
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import os
+import time
 from datetime import datetime, timedelta, timezone
 from functools import lru_cache
-from getpass import getpass
 from pathlib import Path
 from typing import Optional, Tuple
 
 import requests
+from dotenv import load_dotenv
+
+load_dotenv()
 
 # -----------------------
 # Logging
@@ -33,8 +40,8 @@ logger.setLevel(logging.INFO)
 # -----------------------
 # Config
 # -----------------------
-CACHE_FILE = Path("tle_cache.json")  # local project cache
-CACHE_TTL = timedelta(hours=6)
+CACHE_FILE = Path(os.getenv("TLE_CACHE_FILE", "tle_cache.json"))
+CACHE_TTL = timedelta(hours=float(os.getenv("TLE_CACHE_TTL_HOURS", "6")))
 
 CELESTRAK_GP_URL = "https://celestrak.org/NORAD/elements/gp.php"
 
@@ -45,6 +52,11 @@ SPACE_TRACK_TLE_URL = (
     "NORAD_CAT_ID/{norad}/"
     "orderby/EPOCH desc/limit/1/format/tle"
 )
+
+DEFAULT_HEADERS = {
+    "User-Agent": "SpaceDebrisEngine/1.0",
+    "Accept": "text/plain, */*; q=0.01",
+}
 
 # -----------------------
 # Runtime globals
@@ -72,11 +84,13 @@ def _load_cache() -> dict:
         logger.warning("TLE cache file unreadable or corrupt, starting fresh.")
         return {}
 
+
 def _save_cache(cache: dict) -> None:
     try:
         CACHE_FILE.write_text(json.dumps(cache, indent=2), encoding="utf-8")
     except Exception as e:
         logger.warning("Failed to write TLE cache: %s", e)
+
 
 def _cache_get(cache: dict, norad_str: str, now: datetime) -> Optional[Tuple[str, str, str]]:
     """
@@ -84,24 +98,40 @@ def _cache_get(cache: dict, norad_str: str, now: datetime) -> Optional[Tuple[str
     """
     if norad_str not in cache:
         return None
+
     entry = cache.get(norad_str, {})
     try:
         ts = datetime.fromisoformat(entry["timestamp"])
+        if ts.tzinfo is None:
+            ts = ts.replace(tzinfo=timezone.utc)
+
         if now - ts >= CACHE_TTL:
             return None
+
         name = entry["name"]
         l1 = entry["line1"]
         l2 = entry["line2"]
+
         if not (isinstance(name, str) and isinstance(l1, str) and isinstance(l2, str)):
             return None
         if not (l1.startswith("1 ") and l2.startswith("2 ")):
             return None
+
         logger.info("TLE cache hit for NORAD %s", norad_str)
         return name, l1, l2
     except Exception:
         return None
 
-def _cache_put_success(cache: dict, norad_str: str, now: datetime, name: str, l1: str, l2: str, source: str) -> None:
+
+def _cache_put_success(
+    cache: dict,
+    norad_str: str,
+    now: datetime,
+    name: str,
+    l1: str,
+    l2: str,
+    source: str,
+) -> None:
     """
     Cache only successful TLE fetches.
     """
@@ -122,36 +152,51 @@ def _looks_like_html(text: str) -> bool:
     t = (text or "").lower()
     return ("<html" in t) or ("<!doctype html" in t) or ("</html>" in t)
 
+
 def _looks_like_celestrak_error(text: str) -> bool:
     t = (text or "").lower()
     needles = [
-        "no gp data", "no data", "not found", "invalid", "error",
-        "forbidden", "access denied", "cloudflare", "attention required",
+        "no gp data",
+        "no data",
+        "not found",
+        "invalid",
+        "error",
+        "forbidden",
+        "access denied",
+        "cloudflare",
+        "attention required",
     ]
     return any(n in t for n in needles)
+
+
+def _get_env_credentials() -> tuple[str, str]:
+    username = (os.getenv("SPACETRACK_EMAIL") or "").strip()
+    password = os.getenv("SPACETRACK_PASSWORD") or ""
+
+    if not username or not password:
+        raise RuntimeError(
+            "Missing Space-Track credentials. Set SPACETRACK_EMAIL and "
+            "SPACETRACK_PASSWORD in your .env file."
+        )
+    return username, password
 
 # -----------------------
 # Space-Track login
 # -----------------------
 def _get_space_track_session() -> requests.Session:
     """
-    Authenticated Space-Track session. Prompts once per run.
+    Authenticated Space-Track session.
+    Uses .env credentials. No interactive prompts.
     """
     global _SPACE_TRACK_SESSION
 
     if _SPACE_TRACK_SESSION is not None:
         return _SPACE_TRACK_SESSION
 
-    print("\n=== Space-Track login required (one-time for this run) ===")
-    print("If you don't have an account, register at https://www.space-track.org")
-    username = input("Space-Track username/email: ").strip()
-    password = getpass("Space-Track password: ")
+    username, password = _get_env_credentials()
 
     session = requests.Session()
-    session.headers.update({
-        "User-Agent": "SpaceDebrisEngine/1.0 (+https://example.invalid)",
-        "Accept": "text/plain, */*; q=0.01",
-    })
+    session.headers.update(DEFAULT_HEADERS)
 
     try:
         resp = session.post(
@@ -168,9 +213,17 @@ def _get_space_track_session() -> requests.Session:
     if not session.cookies:
         raise RuntimeError("Space-Track login failed (no session cookies received)")
 
-    logger.info("Space-Track login succeeded (cookies present).")
+    logger.info("Space-Track login succeeded.")
     _SPACE_TRACK_SESSION = session
     return session
+
+
+def reset_space_track_session() -> None:
+    """
+    Optional helper if you ever need to force re-login.
+    """
+    global _SPACE_TRACK_SESSION
+    _SPACE_TRACK_SESSION = None
 
 # -----------------------
 # Robust TLE parser
@@ -182,12 +235,14 @@ def _parse_tle(text: str, norad_id: int) -> Tuple[str, str, str]:
     Returns (name, line1, line2).
     """
     lines = [l.strip() for l in (text or "").splitlines() if l.strip()]
+
     for i in range(len(lines) - 1):
         if lines[i].startswith("1 ") and lines[i + 1].startswith("2 "):
             return f"NORAD-{norad_id}", lines[i], lines[i + 1]
         if i + 2 < len(lines) and lines[i + 1].startswith("1 ") and lines[i + 2].startswith("2 "):
             name = lines[i]
             return name, lines[i + 1], lines[i + 2]
+
     raise ValueError("Invalid TLE response (no '1 '/'2 ' pair found)")
 
 # -----------------------
@@ -199,7 +254,7 @@ def _fetch_space_track(norad_id: int) -> Tuple[str, str, str]:
 
     IMPORTANT:
     - 204 => no content/TLE for that NORAD => mark skip for this NORAD only
-    - HTML => likely auth/redirect/rate-limit => skip this NORAD for this run (do NOT global-disable)
+    - HTML => likely auth/redirect/rate-limit => skip this NORAD for this run
     """
     if norad_id in _SPACE_TRACK_SKIP_NORAD:
         raise RuntimeError(f"Space-Track skipped for NORAD {norad_id} in this run")
@@ -210,17 +265,19 @@ def _fetch_space_track(norad_id: int) -> Tuple[str, str, str]:
     try:
         resp = session.get(url, timeout=20)
     except requests.RequestException as e:
-        # transient network errors shouldn't poison this NORAD permanently
         raise RuntimeError(f"Space-Track GET failed: {e}") from e
 
-    # Key fix: Space-Track returns 204 for "no data"
     if resp.status_code == 204:
         _SPACE_TRACK_SKIP_NORAD.add(norad_id)
         raise RuntimeError(f"Space-Track: no TLE available (204) for NORAD {norad_id}")
 
+    if resp.status_code == 401 or resp.status_code == 403:
+        _SPACE_TRACK_SKIP_NORAD.add(norad_id)
+        raise RuntimeError(
+            f"Space-Track auth failed for NORAD {norad_id} (HTTP {resp.status_code})"
+        )
+
     if resp.status_code != 200:
-        # don't skip forever; but if it's a consistent non-200 for this NORAD,
-        # we skip it for this run to avoid repeated failing calls.
         _SPACE_TRACK_SKIP_NORAD.add(norad_id)
         raise RuntimeError(f"Space-Track GET HTTP error: {resp.status_code}")
 
@@ -230,7 +287,8 @@ def _fetch_space_track(norad_id: int) -> Tuple[str, str, str]:
     if "text/html" in ct or _looks_like_html(text):
         _SPACE_TRACK_SKIP_NORAD.add(norad_id)
         raise RuntimeError(
-            f"Space-Track returned HTML for NORAD {norad_id} (redirect/login/rate-limit?). Skipping ST for this NORAD."
+            f"Space-Track returned HTML for NORAD {norad_id} "
+            f"(redirect/login/rate-limit?). Skipping ST for this NORAD."
         )
 
     if "1 " not in text or "2 " not in text:
@@ -251,6 +309,7 @@ def _fetch_celestrak(norad_id: int) -> Tuple[str, str, str]:
     params = {"CATNR": str(norad_id), "FORMAT": "TLE"}
 
     last_exc: Optional[Exception] = None
+
     for attempt in range(1, 4):
         try:
             resp = session.get(CELESTRAK_GP_URL, params=params, timeout=15)
@@ -273,12 +332,7 @@ def _fetch_celestrak(norad_id: int) -> Tuple[str, str, str]:
         except (requests.RequestException, RuntimeError, ValueError) as e:
             last_exc = e
 
-        # small backoff
-        try:
-            import time
-            time.sleep(0.6 * attempt)
-        except Exception:
-            pass
+        time.sleep(0.6 * attempt)
 
     raise RuntimeError(f"CelesTrak failed after retries for NORAD {norad_id}: {last_exc}") from last_exc
 
@@ -294,6 +348,7 @@ def fetch_tle(norad_id: int) -> Tuple[str, str, str]:
       - falls back to CelesTrak
     Raises RuntimeError if both fail.
     """
+    norad_id = int(norad_id)
     norad_str = str(norad_id)
     now = datetime.now(timezone.utc)
 
@@ -312,7 +367,7 @@ def fetch_tle(norad_id: int) -> Tuple[str, str, str]:
         return name, l1, l2
     except Exception as st_e:
         last_exc = st_e
-        logger.warning("Space-Track failed: %s", st_e)
+        logger.warning("Space-Track failed for NORAD %s: %s", norad_str, st_e)
 
     # 2) CelesTrak fallback
     try:
@@ -322,9 +377,16 @@ def fetch_tle(norad_id: int) -> Tuple[str, str, str]:
         return name, l1, l2
     except Exception as cel_e:
         last_exc = cel_e
-        logger.warning("CelesTrak failed: %s", cel_e)
+        logger.warning("CelesTrak failed for NORAD %s: %s", norad_str, cel_e)
 
     raise RuntimeError(f"TLE unavailable for NORAD {norad_id}") from last_exc
+
+
+def clear_tle_memory_cache() -> None:
+    """
+    Optional helper for dev/testing.
+    """
+    fetch_tle.cache_clear()
 
 # -----------------------
 # Quick test
