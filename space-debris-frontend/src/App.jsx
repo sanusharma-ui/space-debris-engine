@@ -546,7 +546,10 @@ function SidebarContent({ status, response, onNavigate }) {
 }
 
 export default function SpaceDebrisFrontend() {
-  const [apiBase, setApiBase] = useState("http://127.0.0.1:8000");
+  // const [apiBase, setApiBase] = useState("http://127.0.0.1:8000");
+  const [apiBase, setApiBase] = useState(
+  import.meta.env.VITE_API_BASE || "http://127.0.0.1:8000"
+);
   const [mode, setMode] = useState("auto");
   const [inputMode, setInputMode] = useState("real-tle");
 
