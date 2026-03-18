@@ -1,4 +1,4 @@
-# King SpaceDeb — Space‑Debris Screening & Confirmation Engine
+# SpaceDeb — Space‑Debris Screening & Confirmation Engine
 
 **Status:** Prototype → research‑grade toolchain  
 **License:** GNU Affero General Public License v3.0 (AGPL‑3.0) — updated January 31, 2026  
