@@ -1,7 +1,7 @@
 # SpaceDeb — Space‑Debris Screening & Confirmation Engine
 
 **Status:** Prototype → research‑grade toolchain  
-**License:** GNU Affero General Public License v3.0 (AGPL‑3.0) — updated January 31, 2026  
+**License:** This project is licensed under the MIT License.
 **In one sentence:** A practical two‑stage system that quickly screens thousands of potential conjunctions with conservative filtering (Engine‑1) and then applies high‑fidelity propagation and Monte‑Carlo analysis only to the real candidates (Engine‑2), together with solid TLE fetching, CLI control, visualization, and JSON outputs.
 
 ---
@@ -128,7 +128,7 @@ Timestamps use UTC format: `YYYYMMDDTHHMMSSZ`.
 ---
 
 ## Security / licensing / legal
-- **License:** AGPL‑3.0 (added/updated on January 31, 2026). This repo is copyleft: network service redistributors must disclose source under AGPL terms.  
+- **License:** This project is licensed under the MIT License.
 - **Disclaimer:** Research prototype — **NOT** certified for operational collision avoidance. Do not use for live maneuver decisions without independent validation and authorization.  
 - **Data sources:** TLEs are public (CelesTrak, Space‑Track). The fetcher logs the source per cached entry.  
 - **Responsible disclosure:** If you find a bug that can cause incorrect risk reporting, open an issue and mark it `security` or `safety`.
