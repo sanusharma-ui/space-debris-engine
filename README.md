@@ -2,6 +2,7 @@
 
 **Status:** Prototype → research‑grade toolchain  
 **License:** This project is licensed under the MIT License.
+
 **In one sentence:** A practical two‑stage system that quickly screens thousands of potential conjunctions with conservative filtering (Engine‑1) and then applies high‑fidelity propagation and Monte‑Carlo analysis only to the real candidates (Engine‑2), together with solid TLE fetching, CLI control, visualization, and JSON outputs.
 
 ---
