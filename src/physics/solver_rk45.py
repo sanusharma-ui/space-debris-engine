@@ -14,6 +14,23 @@ _A = [
 _B_HIGH = np.array([35/384, 0.0, 500/1113, 125/192, -2187/6784, 11/84, 0.0], dtype=float)
 _B_LOW = np.array([5179/57600, 0.0, 7571/16695, 393/640, -92097/339200, 187/2100, 1/40], dtype=float)
 
+
+class _StateView:
+    __slots__ = ("r", "v")
+
+    def __init__(self, y):
+        self.r = y[0:3]
+        self.v = y[3:6]
+
+
+class _StateLike:
+    __slots__ = ("r", "v")
+
+    def __init__(self, r, v):
+        self.r = np.array(r, dtype=float)
+        self.v = np.array(v, dtype=float)
+
+
 class RK45Solver:
     """
     Dormand–Prince (RK45) adaptive integrator for orbital state integration.
@@ -26,11 +43,33 @@ class RK45Solver:
         self.atol = float(atol)
         self.dt_min = float(dt_min)
         self.dt_max = float(dt_max)
+        self.reset_stats()
+
+    def reset_stats(self):
+        self.stats = {
+            "accepted_steps": 0,
+            "rejected_steps": 0,
+            "force_evaluations": 0,
+            "min_step": None,
+            "max_step": 0.0,
+            "last_error_ratio": None,
+        }
 
     def _deriv(self, state):
         # returns concatenated derivative [vx, vy, vz, ax, ay, az]
         a = self.force.acceleration(state, self._t_current)
-        return np.hstack((state.v, a))
+        self.stats["force_evaluations"] += 1
+        return np.concatenate((state.v, a))
+
+    def _record_step(self, h: float, err_ratio: float, accepted: bool):
+        key = "accepted_steps" if accepted else "rejected_steps"
+        self.stats[key] += 1
+        self.stats["last_error_ratio"] = float(err_ratio)
+        if accepted:
+            h_abs = abs(float(h))
+            min_step = self.stats["min_step"]
+            self.stats["min_step"] = h_abs if min_step is None else min(float(min_step), h_abs)
+            self.stats["max_step"] = max(float(self.stats["max_step"]), h_abs)
 
     def step(self, state, dt: float, t0: float = 0.0):
         """
@@ -61,22 +100,14 @@ class RK45Solver:
                 # other stages
                 for i in range(1, len(_C)):
                     ti = t + _C[i] * h
-                    yi = np.hstack((s.r, s.v))
+                    yi = np.concatenate((s.r, s.v))
                     for j, aij in enumerate(_A[i]):
                         yi += h * aij * ks[j]
-                    # create temp state for accel evaluation
-                    r_tmp = yi[0:3]
-                    v_tmp = yi[3:6]
-                    class _TmpState:
-                        pass
-                    tmp = _TmpState()
-                    tmp.r = r_tmp
-                    tmp.v = v_tmp
                     self._t_current = ti
-                    ki = self._deriv(tmp)
+                    ki = self._deriv(_StateView(yi))
                     ks.append(ki)
                 # combine to high and low order
-                y0 = np.hstack((s.r, s.v))
+                y0 = np.concatenate((s.r, s.v))
                 y_high = y0.copy()
                 y_low = y0.copy()
                 for i_k in range(len(ks)):
@@ -97,15 +128,11 @@ class RK45Solver:
                     try:
                         new_state = type(s)(r_next, v_next)
                     except Exception:
-                        # fallback: create simple object with r/v
-                        class _StateLike:
-                            def __init__(self, r, v):
-                                self.r = np.array(r, dtype=float)
-                                self.v = np.array(v, dtype=float)
                         new_state = _StateLike(r_next, v_next)
                     s = new_state
                     t += h
                     success = True
+                    self._record_step(h, err_ratio, accepted=True)
                     # adapt step size for next
                     if err_ratio == 0.0:
                         factor = 5.0
@@ -128,16 +155,14 @@ class RK45Solver:
                         try:
                             new_state = type(s)(r_next, v_next)
                         except Exception:
-                            class _StateLike:
-                                def __init__(self, r, v):
-                                    self.r = np.array(r, dtype=float)
-                                    self.v = np.array(v, dtype=float)
                             new_state = _StateLike(r_next, v_next)
                         s = new_state
                         t += h
                         success = True
+                        self._record_step(h, err_ratio, accepted=True)
                         h = self.dt_min  # for next
                     else:
+                        self._record_step(h, err_ratio, accepted=False)
                         h = max(self.dt_min, h_new)
                         # retry with smaller h
         return s

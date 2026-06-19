@@ -23,6 +23,8 @@ GM = 3.986004418e14
 RE = 6378137.0
 EARTH_RADIUS = RE
 J2 = 1.08262668e-3
+J3 = -2.53215306e-6
+J4 = -1.61962159137e-6
 OMEGA_EARTH = 7.2921150e-5  # rad/s (Earth rotation rate)
 
 # Geometry
@@ -75,16 +77,64 @@ AVOIDANCE_DELTA_V_MS = 0.05  # m/s (5 cm/s) — sensible demo avoidance burn
 # Backward-compatible name (now explicitly in m/s)
 AVOIDANCE_DELTA_V = AVOIDANCE_DELTA_V_MS
 
-# Atmosphere (simple demo model)
+# Atmosphere
 RHO0 = 2.4e-12
 H0 = 400_000.0
 SCALE_HEIGHT = 60_000.0
 
+# Static density table used for fast log-linear interpolation. Values are
+# representative SI densities for quiet thermospheric screening; for operational
+# work this should be replaced by NRLMSISE-00/JB2008 with space-weather inputs.
+ATMOSPHERE_DENSITY_TABLE = (
+    (0.0, 1.225),
+    (25_000.0, 3.899e-2),
+    (30_000.0, 1.774e-2),
+    (40_000.0, 3.972e-3),
+    (50_000.0, 1.057e-3),
+    (60_000.0, 3.206e-4),
+    (70_000.0, 8.770e-5),
+    (80_000.0, 1.905e-5),
+    (90_000.0, 3.396e-6),
+    (100_000.0, 5.297e-7),
+    (110_000.0, 9.661e-8),
+    (120_000.0, 2.438e-8),
+    (130_000.0, 8.484e-9),
+    (140_000.0, 3.845e-9),
+    (150_000.0, 2.070e-9),
+    (180_000.0, 5.464e-10),
+    (200_000.0, 2.789e-10),
+    (250_000.0, 7.248e-11),
+    (300_000.0, 2.418e-11),
+    (350_000.0, 9.518e-12),
+    (400_000.0, 3.725e-12),
+    (450_000.0, 1.585e-12),
+    (500_000.0, 6.967e-13),
+    (600_000.0, 1.454e-13),
+    (700_000.0, 3.614e-14),
+    (800_000.0, 1.170e-14),
+    (900_000.0, 5.245e-15),
+    (1_000_000.0, 3.019e-15),
+)
+
 
 def atmospheric_density(altitude: float) -> float:
-    if altitude <= 0.0 or altitude >= 1_000_000.0:
+    altitude = float(altitude)
+    if altitude < 0.0 or altitude > 1_000_000.0:
         return 0.0
-    return float(RHO0 * np.exp(-(altitude - H0) / SCALE_HEIGHT))
+
+    table = ATMOSPHERE_DENSITY_TABLE
+    if altitude <= table[0][0]:
+        return float(table[0][1])
+
+    for (h0, rho0), (h1, rho1) in zip(table[:-1], table[1:]):
+        if h0 <= altitude <= h1:
+            if rho0 <= 0.0 or rho1 <= 0.0:
+                return 0.0
+            w = (altitude - h0) / (h1 - h0)
+            log_rho = (1.0 - w) * np.log(rho0) + w * np.log(rho1)
+            return float(np.exp(log_rho))
+
+    return float(table[-1][1])
 
 
 DEFAULT_BALLISTIC_COEFF = 50.0
@@ -107,9 +157,19 @@ ENGINE1_FRAME = "TEME"
 # Engine-2 tuning
 ENGINE2_DT = 1.0
 ENGINE2_USE_CHAN = True
+ENGINE2_RK45_RTOL = 1e-9
+ENGINE2_RK45_ATOL = 1e-11
+ENGINE2_DT_MIN = 1e-4
+ENGINE2_DT_MAX = 10.0
+ENGINE2_NEAR_APPROACH_SUBDIVISIONS = 10
+ENGINE2_MAX_MACRO_STEPS = 2_000_000
+ENGINE2_ENABLE_SRP_DEFAULT = True
+ENGINE2_ENABLE_THIRD_BODY_DEFAULT = True
 
 # Monte Carlo
 MC_DEFAULT_N = 300
+MC_MAX_N = 5000
+MC_RANDOM_SEED: Optional[int] = None
 
 
 def clamp_lookahead(val: Optional[float]) -> float:
